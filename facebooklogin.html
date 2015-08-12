@@ -1,0 +1,58 @@
+ <!DOCTYPE html>
+ <html>
+ <head>
+   <title>Facebook Login to menupage</title>
+ </head>
+ <body>
+  <button>
+    <button class="btn btn-default" id="new-menu-tem">
+      <span class="glyphicon glyphicon-glass" aria-hidden="true"></span>Login with Facebook
+      <fb:login-button scrope = "public_profile, email" onlogin="sendTokenToServer();">
+      <a href="javascript:sendTokenToServer()">Login with Facebook</a>
+    </fb:login-button>
+  </button>
+  <div id="result"></div>
+  <script>
+      window.fbAsyncInit = function() {
+        FB.init({
+          appId      : '142200289449453',
+          xfbml      : true,
+          version    : 'v2.4'
+        });
+      };
+
+      (function(d, s, id){
+         var js, fjs = d.getElementsByTagName(s)[0];
+         if (d.getElementById(id)) {return;}
+         js = d.createElement(s); js.id = id;
+         js.src = "//connect.facebook.net/en_US/sdk.js";
+         fjs.parentNode.insertBefore(js, fjs);
+       }(document, 'script', 'facebook-jssdk'));
+
+      function sendTokenToServer() {
+        var access_token = FB.getAuthResponse() ['accessToken'];
+        console.log('Welcome Fetching your access token....');
+        console.log(access_token);
+        FB.api('/me', function(response) {
+          console.log('Successful login for:' + response.name);
+          $.ajax({
+            type: 'POST',
+            url: '/fbconnect?state={{STATE}}',
+            processData: false,
+            data: access_token,
+            contentType: 'application/octet-stream; charset=utf-8',
+            success: function(result) {
+              if (result) {
+                $('#result').html('Login Successful. Redirecting....');
+                setTimeout(function() {
+                  window.loaction.href = '/restaurant'; }, 4000);
+              } else {
+                  $('#result').html('Failed to login through Facebook. Check your configurations');
+              }
+            }
+          })
+        })
+      }
+    </script>
+ </body>
+ </html>

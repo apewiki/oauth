@@ -106,6 +106,7 @@ def gconnect():
     login_session['username'] = data["name"]
     login_session['picture'] = data['picture']
     login_session['email'] = data['email']
+    login_session['provider'] = 'google'
 
     user_id = getUserID(login_session['email'])
     if  user_id == None:
@@ -143,9 +144,6 @@ def gdisconnect():
     #reset the user's session
     del login_session['credentials']
     del login_session['gplus_id']
-    del login_session['username']
-    del login_session['picture']
-    del login_session['email']
 
     response = make_response(json.dumps('Successfully disconnected.'), 200)
     response.headers['Content-Type'] = 'application/json'
@@ -155,6 +153,103 @@ def gdisconnect():
     response.headers['Content-Type'] = 'application/json'
     return response
 
+@app.route('/fbconnect', methods=['POST'])
+def fbconnect():
+  if request.args.get('state') != login_session['state']:
+    response = make_response(json.dumps('Invalid state parameter.'), 401)
+    response.headers['Content-Type'] = 'application/json'
+    return response
+  access_token = request.data
+
+  #Exchange client token for long-lived server-side token with GET /oauth/access_token?grant_type=fb_exchange_token&client_id=
+  #{app-id}&client_secret = {app-secret}&fb_exchange_token={short-lived-token}
+  app_id = json.loads(open('fb_client_secrets.json','r').read()) ['web']['app_id']
+  app_secret = json.loads(open('fb_client_secrets.json', 'r').read()) ['web']['app_secret']
+  url = 'https://graph.facebook.com/oauth/access_token?grant_type=fb_exchange_token&client_id=%s&client_secret=%s&fb_exchange_token=%s'%(app_id, app_secret, access_token)
+  h = httplib2.Http()
+  result = h.request(url, 'GET')[1]
+
+  #Use token to getuser info from API
+  userinfo_url = "httlps://graph.facebook.com/v2.2/me"
+  #strip expire tag from access token
+  token = result.split('&')[0]
+  login_session['access_token'] = token.split("=")[1]
+
+  print "!!!!!!!" + result
+
+  url = "https://graph.facebook.com/v2.2/me?%s"%token
+  print url
+  h=httplib2.Http()
+  result = h.request(url,'GET')[1]
+  data = json.loads(result)
+  print "+++++++Got facebook data:" + data['name'] + "+++++" + data['id']
+
+  login_session['provider'] = 'facebook'
+  login_session['username'] = data['name']
+  if 'email' in data:
+    login_session['email'] = data['email']
+  else:
+    login_session['email'] = 'a1p9e86@gmail.com'
+  login_session['facebook_id'] = data['id']
+
+  #Seperate API call to retrieve picture
+  url = "https://graph.facebook.com/v2.2/me/picture?%s&redirect=0&height-200&width=200"%token
+  h = httplib2.Http();
+  result = h.request(url, 'GET')[1]
+  data = json.loads(result)
+  if 'data' in data:
+    if 'url' in data['data']:
+      login_session['picture'] = data["data"]["url"]
+
+  user_id = getUserID(login_session['email'])
+  if not user_id:
+    user_id = createUser(login_session)
+  login_session['user_id'] = user_id
+
+  output = ''
+  output += '<h1>Welcome, '
+  output += login_session['username']
+  output += '!</h1>'
+  if 'picture' in login_session:
+    output += '<img src="'
+    output += login_session['picture']
+    output += ' " style = "width: 300px; height: 200 px; border-radius: 150px; -webkit-border-radius: 150px; -moz-border-radius: 150px;"> '
+  flash("you are now logged in as %s"%login_session['username'])
+  print "done!"
+  return output
+
+@app.route('/fbdisconnect')
+def fbdisconnect():
+  facebook_id = login_session['facebook_id']
+  access_token = login_session['access_token']
+
+  url = "https://graph.facebook.com/%s/permissions?access_token=%s"%(facebook_id, access_token)
+  h = httplib2.Http()
+  result = h.request(url,'DELETE')[1]
+  print result
+  del login_session['facebook_id']
+  return "you have been logged out"
+
+@app.route('/disconnect')
+def disconnect():
+  if 'provider' in login_session:
+    print "++++++++" + login_session['provider'] +"+++++++"
+    if login_session['provider'] == 'google':
+      gdisconnect()
+
+    if login_session['provider'] == 'facebook':
+      print "++++++++ calling fbdisconnect()! " + login_session['provider'] +"+++++++"
+      fbdisconnect()
+
+    del login_session['username']
+    del login_session['email']
+    del login_session['picture']
+    del login_session['user_id']
+    del login_session['provider']
+    flash("You have successfully been logged out.")
+  else:
+    flash("you are not logged in to begin with!")
+  return redirect(url_for('showRestaurants'))
 
 #JSON APIs to view Restaurant Information
 @app.route('/restaurant/<int:restaurant_id>/menu/JSON')
@@ -210,6 +305,7 @@ def editRestaurant(restaurant_id):
   editedRestaurant = session.query(Restaurant).filter_by(id = restaurant_id, user_id = login_session['user_id']).one()
   print editedRestaurant
   if editedRestaurant == None:
+    flash("You don't have permission to edit this restaurant. Return to main menu...")
     return render_template('publicmenu.html')
 
   if request.method == 'POST':
@@ -218,8 +314,7 @@ def editRestaurant(restaurant_id):
         flash('Restaurant Successfully Edited %s' % editedRestaurant.name)
         return redirect(url_for('showRestaurants'))
   else:
-    flash("You don't have permission to edit this restaurant")
-    return redirect(url_for('showMenu', restaurant_id = restaurant_id))
+    return render_template('editRestaurant.html', restaurant = editedRestaurant)
 
 #Delete a restaurant
 @app.route('/restaurant/<int:restaurant_id>/delete/', methods = ['GET','POST'])
